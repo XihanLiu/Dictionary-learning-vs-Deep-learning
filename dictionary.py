@@ -4,12 +4,12 @@ from numpy import linalg as LA
 from sklearn.cluster import KMeans
 import numpy as np
 import torch
+import matlab.engine
+train_path = r'/Users/liuxihan/Desktop/compressed_sensing/Dictionary-learning-vs-Deep-learning'
+dataset_path = r'/Users/liuxihan/Desktop/compressed_sensing/CroppedYale/'
 
-train_path = r'/Users/liuxihan/Desktop/compressed sensing and sparse recovery/Dictionary-learning-vs-Deep-learning'
-dataset_path = r'/Users/liuxihan/Desktop/compressed sensing and sparse recovery/CroppedYale/'
 
-
-def form_dictionary():
+def form_dictionary(train_path, dataset_path):
     # form 39 groups dictionary
     groups_num = 39
     samples_num = 10
@@ -36,29 +36,36 @@ def form_dictionary():
                     num += 1
                     if samples_num == num:
                         break
-    print(dictionary.shape)
+        #dictionary.shape = (32256,390)
+        # print(dictionary.shape)
     return dictionary
 
 
-def OMP(y, A, K):
-    x_ret = np.zeros((A, 2), 1)
-    r = y
-    s = []
-    for i in range(K):
-        cor = abs(np.transpose(A)*r)
-        v, n = max(cor)
-        s = s.union(n)
-        x = torch.linalg.pinv(A(-1, s))*y
-        old_norm_r = LA.norm(r)
-        r = y - A[:, s]*x
-        if LA.norm(r) < 1e-12 or LA.norm(r) >= old_norm_r:
-            break
-    x_ret[s] = x
-    return x_ret
+def Omp(y, A, K):
+    rows, cols = A.shape
+    res = y
+    indexs = []
+    A_c = A.copy()
+
+    for i in range(0, K):
+        products = []
+        for col in range(cols):
+            products.append(np.dot(A[:, col].T, res))
+        index = np.argmax(np.abs(products))
+        indexs.append(index)
+        inv = np.dot(A_c[:, indexs].T, A_c[:, indexs])
+        theta = np.dot(np.dot(np.linalg.inv(inv), A_c[:, indexs].T), y)
+
+        res = y-np.dot(A_c[:, indexs], theta)
+    theta_final = np.zeros(cols,)
+    theta_final[indexs] = theta
+
+    return theta_final
 
 
 def main():
-    A = form_dictionary()
+    A = form_dictionary(train_path, dataset_path)
+    eng = matlab.engine.start_matlab()
     test_list = []
     with open(os.path.join(train_path, 'test.txt'), 'r') as test:
         for lines in test:
@@ -69,13 +76,16 @@ def main():
 
     test_dataset = np.empty(shape=[32256, len(test_list)])
     for sample in test_list:
-        residual = np.zeros([1, 39])
         image = cv2.imread(os.path.join(
             dataset_path, sample[0:7], sample+".pgm"))
         height, width, _ = image.shape
+        # Vectorized Images
         resized_image = cv2.resize(image[:, :, 1], (1, height*width))
         np.append(test_dataset, resized_image)
-        x_hat = OMP(resized_image, A, 15)
+
+        y = resized_image
+        x_hat = Omp(resized_image, A, 15)
+        print(x_hat)
 
 
 main()
